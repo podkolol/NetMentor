@@ -1,6 +1,5 @@
 package database
 
-// В начале файла sqlite.go добавьте:
 import (
 	"NetMentor_bot/config"
 	"database/sql"
@@ -10,7 +9,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Question представляет структуру вопроса викторины
 type Question struct {
 	ID           int      `json:"id"`
 	QuestionText string   `json:"question_text"`
@@ -19,32 +17,26 @@ type Question struct {
 	Category     string   `json:"category"`
 }
 
-// DB представляет соединение с базой данных
 type DB struct {
 	conn *sql.DB
 }
 
-// New создает новое подключение к базе данных
 func New(cfg *config.Config) (*DB, error) {
-	// Подключаемся к SQLite
 	db, err := sql.Open("sqlite", cfg.GetSQLitePath())
 	if err != nil {
 		return nil, fmt.Errorf("ошибка подключения: %v", err)
 	}
 
-	// Проверяем соединение
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ошибка ping: %v", err)
 	}
 
-	// Включаем поддержку внешних ключей
 	db.Exec("PRAGMA foreign_keys = ON")
 
 	log.Println("✅ Подключено к SQLite")
 	return &DB{conn: db}, nil
 }
 
-// Close закрывает соединение с базой данных
 func (db *DB) Close() error {
 	if db.conn != nil {
 		return db.conn.Close()
@@ -52,7 +44,6 @@ func (db *DB) Close() error {
 	return nil
 }
 
-// CreateTables создает таблицы
 func (db *DB) CreateTables() error {
 	query := `
 	CREATE TABLE IF NOT EXISTS questions (
@@ -74,9 +65,7 @@ func (db *DB) CreateTables() error {
 	return nil
 }
 
-// InitSampleData добавляет тестовые данные
 func (db *DB) InitSampleData() error {
-	// Проверяем, есть ли уже данные
 	var count int
 	err := db.conn.QueryRow("SELECT COUNT(*) FROM questions").Scan(&count)
 	if err != nil {
@@ -88,7 +77,6 @@ func (db *DB) InitSampleData() error {
 		return nil
 	}
 
-	// Тестовые вопросы
 	questions := []Question{
 		{
 			QuestionText: "Что такое IP-адрес?",
@@ -137,14 +125,12 @@ func (db *DB) InitSampleData() error {
 		},
 	}
 
-	// Начинаем транзакцию для быстрой вставки
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return fmt.Errorf("ошибка начала транзакции: %v", err)
 	}
 	defer tx.Rollback()
 
-	// Подготавливаем запрос
 	stmt, err := tx.Prepare(`
 		INSERT INTO questions (question_text, options, correct_index, category)
 		VALUES (?, ?, ?, ?)
@@ -154,7 +140,6 @@ func (db *DB) InitSampleData() error {
 	}
 	defer stmt.Close()
 
-	// Добавляем вопросы
 	for _, q := range questions {
 		optionsJSON, err := json.Marshal(q.Options)
 		if err != nil {
@@ -167,7 +152,6 @@ func (db *DB) InitSampleData() error {
 		}
 	}
 
-	// Коммитим транзакцию
 	err = tx.Commit()
 	if err != nil {
 		return fmt.Errorf("ошибка коммита: %v", err)
@@ -177,7 +161,6 @@ func (db *DB) InitSampleData() error {
 	return nil
 }
 
-// AddQuestion добавляет вопрос
 func (db *DB) AddQuestion(q Question) error {
 	optionsJSON, err := json.Marshal(q.Options)
 	if err != nil {
@@ -193,7 +176,6 @@ func (db *DB) AddQuestion(q Question) error {
 	return err
 }
 
-// GetRandomQuestion возвращает случайный вопрос
 func (db *DB) GetRandomQuestion() (*Question, error) {
 	var q Question
 	var optionsJSON string

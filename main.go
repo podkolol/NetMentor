@@ -11,20 +11,17 @@ import (
 func main() {
 	log.Println("🚀 Запуск бота...")
 
-	// Конфигурация
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("Ошибка конфигурации:", err)
 	}
 
-	// База данных
 	db, err := database.New(cfg)
 	if err != nil {
 		log.Fatal("Ошибка БД:", err)
 	}
 	defer db.Close()
 
-	// Бот
 	bot, err := bot.New(cfg.BotToken, db)
 	if err != nil {
 		log.Fatal("Ошибка бота:", err)

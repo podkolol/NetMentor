@@ -3,11 +3,12 @@ package bot
 import (
 	"NetMentor_bot/database"
 	"fmt"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
-	_ "modernc.org/sqlite"
 	"strconv"
 	"strings"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	_ "modernc.org/sqlite"
 )
 
 type Bot struct {
@@ -46,23 +47,18 @@ func (b *Bot) Start() error {
 		chatID := update.Message.Chat.ID
 		text := update.Message.Text
 
-		// ВАЖНОЕ ИЗМЕНЕНИЕ: проверяем два случая отдельно
-
-		// Случай 1: У пользователя есть активный вопрос - обрабатываем ответ
 		if question, exists := b.currentQuestions[chatID]; exists {
 			b.checkAnswer(chatID, text, question)
 			delete(b.currentQuestions, chatID)
 			continue
 		}
 
-		// Случай 2: Проверяем, является ли сообщение командой для бота
 		if !b.isMessageForBot(update.Message) {
-			continue // игнорируем сообщения не для бота
+			continue
 		}
 
 		log.Printf("[%d] Команда: %s", chatID, text)
 
-		// Обрабатываем команды
 		command := b.extractCommand(text)
 		switch command {
 		case "start":
@@ -72,43 +68,34 @@ func (b *Bot) Start() error {
 		case "help":
 			b.sendMessage(chatID, "Команды:\n/quiz - начать викторину\n/help - помощь")
 		default:
-			// Игнорируем неизвестные команды
 		}
 	}
 
 	return nil
 }
 
-// isMessageForBot проверяет, адресовано ли сообщение боту
 func (b *Bot) isMessageForBot(msg *tgbotapi.Message) bool {
-	// Личный чат - всегда наше
 	if msg.Chat.Type == "private" {
 		return true
 	}
 
-	// В группе - только команды с упоминанием
 	if !strings.HasPrefix(msg.Text, "/") {
 		return false
 	}
 
-	// Извлекаем команду
 	parts := strings.Fields(msg.Text)
 	if len(parts) == 0 {
 		return false
 	}
 
-	// Проверяем, содержит ли команда @username бота
 	commandParts := strings.Split(parts[0], "@")
 	if len(commandParts) == 1 {
-		// Команда без @username в группе - может быть для другого бота
 		return false
 	}
 
-	// Команда содержит @username - проверяем, наш ли это username
 	return strings.ToLower(commandParts[1]) == strings.ToLower(b.botUsername)
 }
 
-// extractCommand извлекает чистую команду без @username
 func (b *Bot) extractCommand(text string) string {
 	if !strings.HasPrefix(text, "/") {
 		return ""
@@ -119,7 +106,6 @@ func (b *Bot) extractCommand(text string) string {
 		return ""
 	}
 
-	// Убираем / и @username
 	command := strings.TrimPrefix(parts[0], "/")
 	commandParts := strings.Split(command, "@")
 
@@ -133,10 +119,8 @@ func (b *Bot) sendQuestion(chatID int64) {
 		return
 	}
 
-	// Сохраняем вопрос для этого пользователя
 	b.currentQuestions[chatID] = question
 
-	// Формируем сообщение с вариантами
 	var options strings.Builder
 	for i, opt := range question.Options {
 		options.WriteString(fmt.Sprintf("%d) %s\n", i+1, opt))
@@ -151,14 +135,12 @@ func (b *Bot) sendQuestion(chatID int64) {
 }
 
 func (b *Bot) checkAnswer(chatID int64, answer string, question *database.Question) {
-	// Пытаемся получить номер ответа
 	answer = strings.TrimSpace(answer)
 	answerNum, err := strconv.Atoi(answer)
 
 	var resultText string
 
 	if err != nil || answerNum < 1 || answerNum > 4 {
-		// Если не число 1-4, может быть текст ответа?
 		selectedOption := -1
 		for i, option := range question.Options {
 			if strings.EqualFold(strings.TrimSpace(answer), strings.TrimSpace(option)) {
@@ -179,7 +161,6 @@ func (b *Bot) checkAnswer(chatID int64, answer string, question *database.Questi
 		return
 	}
 
-	// Правильный ответ имеет индекс 0-based
 	userChoice := answerNum - 1
 	correctIndex := question.CorrectIndex
 
@@ -192,10 +173,8 @@ func (b *Bot) checkAnswer(chatID int64, answer string, question *database.Questi
 			correctIndex+1, question.Options[correctIndex])
 	}
 
-	// Добавляем предложение следующего вопроса
 	resultText += "\n\nХотите еще вопрос? Отправьте /quiz"
 
-	// Отправляем результат
 	b.sendMessage(chatID, resultText)
 }
 
