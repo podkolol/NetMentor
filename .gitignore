@@ -1,0 +1,16 @@
+# SQLite базы данных
+*.db
+*.db-journal
+database/*.db
+
+# IDE файлы
+.idea/
+*.iml
+*.swp
+*.swo
+
+# Логи
+*.log
+
+# Переменные окружения
+.env
