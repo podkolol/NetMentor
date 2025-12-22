@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	log.Println("🚀 Запуск бота...")
+	log.Println("Запуск бота...")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -27,6 +27,6 @@ func main() {
 		log.Fatal("Ошибка бота:", err)
 	}
 
-	log.Println("✅ Бот запущен")
+	log.Println("Бот запущен")
 	bot.Start()
 }

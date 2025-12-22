@@ -1,11 +1,11 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/joho/godotenv"
+	"strings"
 )
 
 type Config struct {
@@ -14,7 +14,8 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	godotenv.Load()
+	// Читаем .env файл вручную
+	loadEnv()
 
 	cfg := &Config{
 		BotToken:   getEnv("BOT_TOKEN", ""),
@@ -22,13 +23,11 @@ func Load() (*Config, error) {
 	}
 
 	if cfg.BotToken == "" {
-		return nil, fmt.Errorf("BOT_TOKEN не установлен. Проверьте .env файл")
+		return nil, fmt.Errorf("BOT_TOKEN не установлен")
 	}
 
 	dir := filepath.Dir(cfg.SQLitePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("не удалось создать директорию для БД: %v", err)
-	}
+	os.MkdirAll(dir, 0755)
 
 	return cfg, nil
 }
@@ -42,4 +41,27 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func loadEnv() {
+	file, err := os.Open(".env")
+	if err != nil {
+		return // Файла нет, используем системные переменные
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "#") || len(line) == 0 {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			os.Setenv(key, value)
+		}
+	}
 }

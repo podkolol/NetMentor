@@ -2,79 +2,182 @@ package bot
 
 import (
 	"NetMentor_bot/database"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	_ "modernc.org/sqlite"
+	"time"
 )
 
 type Bot struct {
-	api              *tgbotapi.BotAPI
+	token            string
+	baseURL          string
 	db               *database.DB
 	currentQuestions map[int64]*database.Question
+	lastUpdateID     int
 	botUsername      string
 }
 
+type Update struct {
+	UpdateID int     `json:"update_id"`
+	Message  Message `json:"message"`
+}
+
+type Message struct {
+	MessageID int    `json:"message_id"`
+	Chat      Chat   `json:"chat"`
+	Text      string `json:"text"`
+	From      User   `json:"from"`
+}
+
+type Chat struct {
+	ID   int64  `json:"id"`
+	Type string `json:"type"`
+}
+
+type User struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+}
+
 func New(token string, db *database.DB) (*Bot, error) {
-	api, err := tgbotapi.NewBotAPI(token)
+	bot := &Bot{
+		token:            token,
+		baseURL:          "https://api.telegram.org/bot" + token + "/",
+		db:               db,
+		currentQuestions: make(map[int64]*database.Question),
+		lastUpdateID:     0,
+	}
+
+	// Получаем информацию о боте
+	info, err := bot.getMe()
+	if err != nil {
+		return nil, fmt.Errorf("не удалось получить информацию о боте: %v", err)
+	}
+	bot.botUsername = info.Username
+
+	log.Printf("Бот @%s запущен", bot.botUsername)
+	return bot, nil
+}
+
+type BotInfo struct {
+	Username string `json:"username"`
+}
+
+func (b *Bot) getMe() (*BotInfo, error) {
+	resp, err := http.Get(b.baseURL + "getMe")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Printf("Бот %s запущен", api.Self.UserName)
+	var result struct {
+		OK     bool    `json:"ok"`
+		Result BotInfo `json:"result"`
+	}
 
-	return &Bot{
-		api:              api,
-		db:               db,
-		currentQuestions: make(map[int64]*database.Question),
-		botUsername:      api.Self.UserName,
-	}, nil
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	if !result.OK {
+		return nil, fmt.Errorf("ошибка API: %s", string(body))
+	}
+
+	return &result.Result, nil
 }
 
 func (b *Bot) Start() error {
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	updates := b.api.GetUpdatesChan(u)
+	log.Println("Запуск получения обновлений...")
 
-	for update := range updates {
-		if update.Message == nil {
+	for {
+		updates, err := b.getUpdates()
+		if err != nil {
+			log.Printf("Ошибка получения обновлений: %v", err)
+			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		chatID := update.Message.Chat.ID
-		text := update.Message.Text
-
-		if question, exists := b.currentQuestions[chatID]; exists {
-			b.checkAnswer(chatID, text, question)
-			delete(b.currentQuestions, chatID)
-			continue
+		for _, update := range updates {
+			b.processUpdate(update)
+			b.lastUpdateID = update.UpdateID
 		}
 
-		if !b.isMessageForBot(update.Message) {
-			continue
-		}
-
-		log.Printf("[%d] Команда: %s", chatID, text)
-
-		command := b.extractCommand(text)
-		switch command {
-		case "start":
-			b.sendMessage(chatID, "Привет! Отправь /quiz чтобы начать викторину")
-		case "quiz":
-			b.sendQuestion(chatID)
-		case "help":
-			b.sendMessage(chatID, "Команды:\n/quiz - начать викторину\n/help - помощь")
-		default:
-		}
+		time.Sleep(1 * time.Second)
 	}
-
-	return nil
 }
 
-func (b *Bot) isMessageForBot(msg *tgbotapi.Message) bool {
+func (b *Bot) getUpdates() ([]Update, error) {
+	url := fmt.Sprintf("%sgetUpdates?offset=%d&timeout=30", b.baseURL, b.lastUpdateID+1)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		OK     bool     `json:"ok"`
+		Result []Update `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	if !result.OK {
+		return nil, fmt.Errorf("ошибка API: %s", string(body))
+	}
+
+	return result.Result, nil
+}
+
+func (b *Bot) processUpdate(update Update) {
+	if update.Message.Text == "" {
+		return
+	}
+
+	chatID := update.Message.Chat.ID
+	text := update.Message.Text
+
+	if question, exists := b.currentQuestions[chatID]; exists {
+		b.checkAnswer(chatID, text, question)
+		delete(b.currentQuestions, chatID)
+		return
+	}
+
+	if !b.isMessageForBot(&update.Message) {
+		return
+	}
+
+	log.Printf("[%d] Команда: %s", chatID, text)
+
+	command := b.extractCommand(text)
+	switch command {
+	case "start":
+		b.sendMessage(chatID, "Отправь /quiz чтобы начать викторину")
+	case "quiz":
+		b.sendQuestion(chatID)
+	case "help":
+		b.sendMessage(chatID, "Команды:\n/quiz - начать викторину\n/help - помощь")
+	default:
+	}
+}
+
+func (b *Bot) isMessageForBot(msg *Message) bool {
 	if msg.Chat.Type == "private" {
 		return true
 	}
@@ -156,7 +259,7 @@ func (b *Bot) checkAnswer(chatID int64, answer string, question *database.Questi
 	}
 
 	if err != nil || answerNum < 1 || answerNum > 4 {
-		resultText = "⚠️ Пожалуйста, отправьте номер от 1 до 4.\n\nПопробуйте еще раз: /quiz"
+		resultText = "Пожалуйста, отправьте номер от 1 до 4.\n\nПопробуйте еще раз: /quiz"
 		b.sendMessage(chatID, resultText)
 		return
 	}
@@ -165,28 +268,46 @@ func (b *Bot) checkAnswer(chatID int64, answer string, question *database.Questi
 	correctIndex := question.CorrectIndex
 
 	if userChoice == correctIndex {
-		resultText = fmt.Sprintf("✅ *Правильно!*\n\nОтвет: %d. %s\n\nОтличная работа! 🎉",
+		resultText = fmt.Sprintf("✅ *Правильно!*\n\nОтвет: %d. %s",
 			correctIndex+1, question.Options[correctIndex])
 	} else {
-		resultText = fmt.Sprintf("❌ *Неправильно.*\n\nВаш ответ: %d. %s\n\nПравильный ответ: %d. %s\n\nПопробуйте еще раз! 💪",
+		resultText = fmt.Sprintf("❌ *Неправильно.*\n\nВаш ответ: %d. %s\n\nПравильный ответ: %d. %s\n\nПопробуйте еще раз.",
 			userChoice+1, question.Options[userChoice],
 			correctIndex+1, question.Options[correctIndex])
 	}
 
 	resultText += "\n\nХотите еще вопрос? Отправьте /quiz"
-
 	b.sendMessage(chatID, resultText)
 }
 
 func (b *Bot) sendMessage(chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	msg.ParseMode = "Markdown"
-	_, err := b.api.Send(msg)
+	params := url.Values{}
+	params.Set("chat_id", strconv.FormatInt(chatID, 10))
+	params.Set("text", text)
+	params.Set("parse_mode", "Markdown")
+
+	url := b.baseURL + "sendMessage?" + params.Encode()
+	resp, err := http.Get(url)
 	if err != nil {
-		log.Printf("Ошибка отправки: %v", err)
+		log.Printf("Ошибка отправки сообщения: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Ошибка чтения ответа: %v", err)
+		return
+	}
+
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil || !result.OK {
+		log.Printf("Ошибка API при отправке: %s", string(body))
 	}
 }
 
 func (b *Bot) Stop() {
-	b.api.StopReceivingUpdates()
+	log.Println("Бот остановлен")
 }
